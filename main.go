@@ -11,24 +11,33 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
-var secrets = map[string]string{}
+var (
+	secrets  = map[string]string{}
+	counters = map[string]int64{}
+)
 
-const digits = 7
+const (
+	digits    = 8
+	algorithm = "SHA512"
+	period    = 30
+)
 
 func main() {
 	http.HandleFunc("/uri", func(writer http.ResponseWriter, request *http.Request) {
 		defer request.Body.Close()
 		email := request.URL.Query().Get("email")
+		otpType := request.URL.Query().Get("type")
 		secret := secrets[email]
 		if secret == "" {
 			secret = generateSecret()
 			secrets[email] = secret
 		}
 		m := map[string]string{
-			"uri": buildURI(secret, email),
+			"url": buildURI(secret, email, otpType),
 		}
 		b, _ := json.Marshal(m)
 		writer.WriteHeader(http.StatusOK)
@@ -36,16 +45,22 @@ func main() {
 	})
 	http.HandleFunc("/verify", func(writer http.ResponseWriter, request *http.Request) {
 		defer request.Body.Close()
-		data, err := io.ReadAll(request.Body)
-		if err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			return
+		body := parseBody(request.Body)
+		code := body["code"]
+		email := body["email"]
+		otpType := func() string {
+			if body["type"] == "" {
+				return "totp"
+			}
+			return body["type"]
+		}()
+		result := false
+		if otpType == "totp" {
+			result = verifyTOTP(secrets[email], code)
+		} else {
+			result = verifyHOTP(secrets[email], code)
 		}
-		m := map[string]string{}
-		json.Unmarshal(data, &m)
-		code := m["code"]
-		email := m["email"]
-		if !verify(secrets[email], code) {
+		if !result {
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -54,12 +69,34 @@ func main() {
 	http.ListenAndServe("0.0.0.0:8080", nil)
 }
 
-func genTOTP(secret string) string {
-	return generatePassword(secret, time.Now().Unix()/30)
+func parseBody(body io.ReadCloser) map[string]string {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		panic(err)
+	}
+	m := map[string]string{}
+	json.Unmarshal(data, &m)
+	return m
 }
 
-func verify(secret, code string) bool {
+func genTOTP(secret string) string {
+	return generatePassword(secret, time.Now().Unix()/period)
+}
+
+func genHOTP(secret string) string {
+	return generatePassword(secret, counters[secret])
+}
+
+func verifyTOTP(secret, code string) bool {
 	return genTOTP(secret) == code
+}
+
+func verifyHOTP(secret, code string) bool {
+	result := genHOTP(secret) == code
+	if result {
+		counters[secret]++
+	}
+	return result
 }
 
 func generateSecret() string {
@@ -71,7 +108,7 @@ func generateSecret() string {
 	return base32.StdEncoding.EncodeToString(key[:n])
 }
 
-func Itob(integer int64) []byte {
+func ITob(integer int64) []byte {
 	byteArr := make([]byte, 8)
 	for i := 7; i >= 0; i-- {
 		byteArr[i] = byte(integer & 0xff)
@@ -86,7 +123,7 @@ func generatePassword(key string, counter int64) string {
 		panic(err)
 	}
 	hash := hmac.New(sha512.New, rawKey)
-	hash.Write(Itob(counter))
+	hash.Write(ITob(counter))
 	result := hash.Sum(nil)
 	// 0<= offset <= 15
 	offset := int(result[len(result)-1]) & 0xf
@@ -98,17 +135,24 @@ func generatePassword(key string, counter int64) string {
 	return fmt.Sprintf(fmt.Sprintf("%%0%dd", digits), code)
 }
 
-func buildURI(key, email string) string {
+func buildURI(key, email, otpType string) string {
+	if otpType == "" {
+		otpType = "totp"
+	}
 	q := url.Values{}
 	q.Set("secret", key)
-	q.Set("algorithm", "SHA512")
-	q.Set("digits", fmt.Sprintf("%d", digits))
-	q.Set("period", "30")
+	q.Set("algorithm", algorithm)
+	q.Set("digits", strconv.Itoa(digits))
 	q.Set("issuer", "PPG007")
+	if otpType == "totp" {
+		q.Set("period", strconv.Itoa(period))
+	} else {
+		q.Set("counter", fmt.Sprintf("%d", counters[key]))
+	}
 	u := url.URL{
 		RawQuery: q.Encode(),
 		Scheme:   "otpauth",
-		Host:     "totp",
+		Host:     otpType,
 		Path:     url.PathEscape(email),
 	}
 	return u.String()

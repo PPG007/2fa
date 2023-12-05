@@ -11,17 +11,19 @@
   },
   "dependencies": {
     "@ant-design/icons": "^5.2.6",
+    "@ppg007/otp": "^1.0.0",
     "antd": "^5.11.5",
     "axios": "^1.6.2",
+    "crypto-browserify": "^3.12.0",
+    "jssha": "^3.3.1",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "totp-generator": "^0.0.14"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@types/jssha": "^3.0.0",
     "@types/node": "^20.10.3",
     "@types/react": "^18.2.37",
     "@types/react-dom": "^18.2.15",
-    "@types/totp-generator": "^0.0.8",
     "@typescript-eslint/eslint-plugin": "^6.10.0",
     "@typescript-eslint/parser": "^6.10.0",
     "@vitejs/plugin-react": "^4.2.0",
